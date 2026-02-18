@@ -14,4 +14,4 @@ This repository contains training and evaluation scripts for offroad semantic se
 
 ## 🚀 Usage
 1. Install dependencies: `pip install torch torchvision numpy`
-2. Run training: `python train_segmentation.py`
+2. Run training: `python train_segmentation.py`w

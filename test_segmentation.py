@@ -5,6 +5,9 @@ Evaluates a trained segmentation head on validation data and saves predictions
 """
 
 import torch
+import torch
+from torchmetrics.detection.mean_ap 
+import MeanAveragePrecision  
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from torch import nn
@@ -209,6 +212,35 @@ def compute_pixel_accuracy(pred, target):
     pred_classes = torch.argmax(pred, dim=1)
     return (pred_classes == target).float().mean().cpu().numpy()
 
+def update_map_metric(metric_tool, outputs, targets):
+    # Insert this exactly where your screenshot showed the "parse error"
+    # This feeds the current batch into the metric tracker
+    update_map_metric(map_metric, outputs, labels_squeezed)
+    """
+    Reformats segmentation output for mAP50 calculation.
+    """
+    # Convert raw logits to probabilities
+    probs = torch.softmax(outputs, dim=1)
+    
+    preds_list = []
+    targets_list = []
+    
+    for i in range(outputs.shape[0]):
+        # Get highest probability (score) and predicted class for each pixel
+        scores, pred_masks = torch.max(probs[i], dim=0)
+        
+        preds_list.append({
+            'masks': (probs[i] > 0.5).to(torch.uint8), # Use 0.5 threshold for masks
+            'scores': scores.flatten(),                # Required for precision ranking
+            'labels': pred_masks.flatten().to(torch.int64)
+        })
+        
+        targets_list.append({
+            'masks': (targets[i] > 0).to(torch.uint8),
+            'labels': targets[i].flatten().to(torch.int64)
+        })
+        
+    metric_tool.update(preds_list, targets_list) # Add to cumulative batch 
 
 # ============================================================================
 # Visualization Functions
@@ -259,6 +291,7 @@ def save_metrics_summary(results, output_dir):
         f.write("EVALUATION RESULTS\n")
         f.write("=" * 50 + "\n")
         f.write(f"Mean IoU:          {results['mean_iou']:.4f}\n")
+        f.write(f"mAP50:             {results['mAP50']:.4f}\n") #
         f.write("=" * 50 + "\n\n")
 
         f.write("Per-Class IoU:\n")
@@ -361,6 +394,9 @@ def main():
     # Get embedding dimension
     sample_img, _, _ = valset[0]
     sample_img = sample_img.unsqueeze(0).to(device)
+    # Initialize the mAP metric specifically for segmentation
+    # This keeps track of Precision and Recall across the whole dataset
+    map_metric = MeanAveragePrecision(iou_type="segm").to(device)
     with torch.no_grad():
         output = backbone_model.forward_features(sample_img)["x_norm_patchtokens"]
     n_embedding = output.shape[2]
@@ -449,6 +485,16 @@ def main():
             # Update progress bar with metrics
             pbar.set_postfix(iou=f"{iou:.3f}")
 
+    # Compute the final averaged mAP50 result from all processed batches
+    map_results = map_metric.compute()
+    final_map50 = map_results['map_50'].item()
+    
+    print(f"mAP50:             {final_map50:.4f}")
+    # ---------------------------------------------------------
+
+    # Aggregate results
+    mean_iou = np.nanmean(iou_scores)
+
     # Aggregate results
     mean_iou = np.nanmean(iou_scores)
     mean_dice = np.nanmean(dice_scores)
@@ -460,7 +506,8 @@ def main():
 
     results = {
         'mean_iou': mean_iou,
-        'class_iou': avg_class_iou
+        'class_iou': avg_class_iou,
+        'mAP50': final_map50  # Add this line here
     }
 
     # Print results
